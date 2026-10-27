@@ -794,9 +794,9 @@ export default function App() {
     'Cuối HKI',
     'Giữa HKII',
     'Cuối HKII',
-    'Thử TN THPT Lần 1',
-    'Thử TN THPT Lần 2',
-    'Thử TN THPT Lần 3'
+    'Thử TS 10 Lần 1',
+    'Thử TS 10 Lần 2',
+    'Thử TS 10 Lần 3'
   ];
 
   const namHocOptions: string[] = [
