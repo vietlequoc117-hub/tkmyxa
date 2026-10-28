@@ -567,86 +567,85 @@ def process_scores():
         else: width = 8
         ws_dstruot.column_dimensions[column_letter].width = width
 
-    # --- Sheet TKTruot ---
-    ws_tktruot = wb.create_sheet(title="TKTruot")
-    
-    tktruot_cols = ['Lớp'] + subjects + ['Tổng số HS trượt']
-    
-    # Header dòng 1
-    ws_tktruot.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(tktruot_cols))
-    ws_tktruot['A1'] = f"BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5 THEO LỚP - {kyThi.upper()} {khoiLop.upper()} - NĂM HỌC {namHoc}"
-    ws_tktruot['A1'].font = Font(bold=True, size=12)
-    
-    # Header dòng 3
-    for c_idx, col_name in enumerate(tktruot_cols, 1):
-        cell = ws_tktruot.cell(row=3, column=c_idx, value=col_name.capitalize() if col_name in subjects else col_name)
-        cell.font = Font(bold=True)
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal='center', vertical='center')
+    # --- Sheets TKTruot, Duoi55, Duoi65 ---
+    def build_threshold_sheet(sheet_name, threshold, threshold_label):
+        ws_stat = wb.create_sheet(title=sheet_name)
+        stat_cols = ['Lớp'] + subjects + ['Tổng số HS trượt']
         
-    current_row = 4
-    df_valid = df_final[(df_final['Họ và tên'] != 'ĐIỂM TRUNG BÌNH') & (df_final['Lớp'] != 'TSTD')]
-    
-    total_row_data = {col: 0 for col in subjects}
-    total_hs_truot_all = 0
-    
-    for cls in classes:
-        if cls == 'TSTD': continue
-        df_cls = df_valid[df_valid['Lớp'] == cls]
+        ws_stat.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(stat_cols))
+        ws_stat['A1'] = f"BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI {threshold_label} THEO LỚP - {kyThi.upper()} {khoiLop.upper()} - NĂM HỌC {namHoc}"
+        ws_stat['A1'].font = Font(bold=True, size=12)
         
-        ws_tktruot.cell(row=current_row, column=1, value=cls).border = thin_border
+        for c_idx, col_name in enumerate(stat_cols, 1):
+            cell = ws_stat.cell(row=3, column=c_idx, value=col_name.capitalize() if col_name in subjects else col_name)
+            cell.font = Font(bold=True)
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            
+        curr_row = 4
+        df_valid = df_final[(df_final['Họ và tên'] != 'ĐIỂM TRUNG BÌNH') & (df_final['Lớp'] != 'TSTD')]
         
-        # Count students with < 5 in any subject for this class
-        mask_cls = pd.Series(False, index=df_cls.index)
-        for sub in subjects:
-            if sub in df_cls.columns:
-                mask_cls = mask_cls | (df_cls[sub] < 5)
+        total_row_data = {col: 0 for col in subjects}
+        total_hs_all = 0
         
-        hs_truot_cls = mask_cls.sum()
-        total_hs_truot_all += hs_truot_cls
+        for cls in classes:
+            if cls == 'TSTD': continue
+            df_cls = df_valid[df_valid['Lớp'] == cls]
+            
+            ws_stat.cell(row=curr_row, column=1, value=cls).border = thin_border
+            
+            mask_cls = pd.Series(False, index=df_cls.index)
+            for sub in subjects:
+                if sub in df_cls.columns:
+                    mask_cls = mask_cls | (df_cls[sub] < threshold)
+            
+            hs_cls = mask_cls.sum()
+            total_hs_all += hs_cls
+            
+            for c_idx, sub in enumerate(subjects, 2):
+                if sub in df_cls.columns:
+                    count_sub = (df_cls[sub] < threshold).sum()
+                else:
+                    count_sub = 0
+                
+                total_row_data[sub] += count_sub
+                
+                cell = ws_stat.cell(row=curr_row, column=c_idx, value=count_sub)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center')
+                
+            cell_total = ws_stat.cell(row=curr_row, column=len(stat_cols), value=hs_cls)
+            cell_total.border = thin_border
+            cell_total.alignment = Alignment(horizontal='center')
+            
+            curr_row += 1
+            
+        cell_tc = ws_stat.cell(row=curr_row, column=1, value='TỔNG CỘNG')
+        cell_tc.font = Font(bold=True)
+        cell_tc.border = thin_border
         
         for c_idx, sub in enumerate(subjects, 2):
-            if sub in df_cls.columns:
-                count_sub = (df_cls[sub] < 5).sum()
-            else:
-                count_sub = 0
-            
-            total_row_data[sub] += count_sub
-            
-            cell = ws_tktruot.cell(row=current_row, column=c_idx, value=count_sub)
+            cell = ws_stat.cell(row=curr_row, column=c_idx, value=total_row_data[sub])
+            cell.font = Font(bold=True)
             cell.border = thin_border
             cell.alignment = Alignment(horizontal='center')
             
-        cell_total = ws_tktruot.cell(row=current_row, column=len(tktruot_cols), value=hs_truot_cls)
-        cell_total.border = thin_border
-        cell_total.alignment = Alignment(horizontal='center')
+        cell_total_all = ws_stat.cell(row=curr_row, column=len(stat_cols), value=total_hs_all)
+        cell_total_all.font = Font(bold=True)
+        cell_total_all.border = thin_border
+        cell_total_all.alignment = Alignment(horizontal='center')
         
-        current_row += 1
-        
-    # TỔNG CỘNG row
-    cell_tc = ws_tktruot.cell(row=current_row, column=1, value='TỔNG CỘNG')
-    cell_tc.font = Font(bold=True)
-    cell_tc.border = thin_border
-    
-    for c_idx, sub in enumerate(subjects, 2):
-        cell = ws_tktruot.cell(row=current_row, column=c_idx, value=total_row_data[sub])
-        cell.font = Font(bold=True)
-        cell.border = thin_border
-        cell.alignment = Alignment(horizontal='center')
-        
-    cell_total_all = ws_tktruot.cell(row=current_row, column=len(tktruot_cols), value=total_hs_truot_all)
-    cell_total_all.font = Font(bold=True)
-    cell_total_all.border = thin_border
-    cell_total_all.alignment = Alignment(horizontal='center')
-    
-    # Auto-fit columns
-    for col in ws_tktruot.columns:
-        column_letter = col[0].column_letter
-        header_val = ws_tktruot[f'{column_letter}3'].value
-        if header_val == 'Lớp': width = 8
-        elif header_val == 'Tổng số HS trượt': width = 15
-        else: width = 8
-        ws_tktruot.column_dimensions[column_letter].width = width
+        for col in ws_stat.columns:
+            column_letter = col[0].column_letter
+            header_val = ws_stat[f'{column_letter}3'].value
+            if header_val == 'Lớp': width = 8
+            elif header_val == 'Tổng số HS trượt': width = 15
+            else: width = 8
+            ws_stat.column_dimensions[column_letter].width = width
+
+    build_threshold_sheet("TKTruot", 5, "5")
+    build_threshold_sheet("Duoi55", 5.5, "5.5")
+    build_threshold_sheet("Duoi65", 6.5, "6.5")
 
     zip_filename = "Danh_sach_cac_lop.zip"
     with zipfile.ZipFile(zip_filename, 'w') as zipf:
@@ -1191,6 +1190,8 @@ export default function App() {
       const tbdiemSheet = outWorkbook.addWorksheet('TBDIEM');
       const tksoSheet = outWorkbook.addWorksheet('TKSo');
       const tktruotSheet = outWorkbook.addWorksheet('TKTruot');
+      const duoi55Sheet = outWorkbook.addWorksheet('Duoi55');
+      const duoi65Sheet = outWorkbook.addWorksheet('Duoi65');
       const dstruotSheet = outWorkbook.addWorksheet('DSTruot');
       
       const classSheets: Record<string, ExcelJS.Worksheet> = {};
@@ -1934,96 +1935,102 @@ export default function App() {
         else column.width = 8;
       });
 
-      // --- TKTruot Sheet ---
-      
-      const tktruotCols = ['lop', ...subjects, 'tongHsTruot'];
-      const tktruotHeaders = ['Lớp', ...subjects.map(s => s.charAt(0).toUpperCase() + s.slice(1)), 'Tổng số HS trượt'];
-      
-      tktruotSheet.insertRow(1, []);
-      tktruotSheet.insertRow(1, []);
-      tktruotSheet.mergeCells(1, 1, 1, tktruotCols.length);
-      const tktruotTitle = tktruotSheet.getCell('A1');
-      tktruotTitle.value = `BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5 THEO LỚP - ${kyThi.toUpperCase()} ${khoiLop.toUpperCase()} - NĂM HỌC ${namHoc}`;
-      tktruotTitle.font = { bold: true, size: 12 };
-      
-      const tktruotHeaderRow = tktruotSheet.getRow(3);
-      tktruotHeaders.forEach((header, idx) => {
-        const cell = tktruotHeaderRow.getCell(idx + 1);
-        cell.value = header;
-        cell.font = { bold: true };
-        cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      });
-      
-      let tktruotCurrentRow = 4;
-      const totalRowData: Record<string, number> = {};
-      subjects.forEach(sub => totalRowData[sub] = 0);
-      let totalHsTruotAll = 0;
-      
-      classes.forEach(cls => {
-        if (cls === 'TSTD') return;
+      // --- TKTruot, Duoi55, Duoi65 Sheets ---
+      const buildThresholdStatSheet = (targetSheet: ExcelJS.Worksheet, threshold: number, thresholdLabel: string) => {
+        const statCols = ['lop', ...subjects, 'tongHsTruot'];
+        const statHeaders = ['Lớp', ...subjects.map(s => s.charAt(0).toUpperCase() + s.slice(1)), 'Tổng số HS trượt'];
         
-        const clsStudents = validStudentsForAvg.filter(s => s.lop === cls);
+        targetSheet.insertRow(1, []);
+        targetSheet.insertRow(1, []);
+        targetSheet.mergeCells(1, 1, 1, statCols.length);
+        const statTitle = targetSheet.getCell('A1');
+        statTitle.value = `BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI ${thresholdLabel} THEO LỚP - ${kyThi.toUpperCase()} ${khoiLop.toUpperCase()} - NĂM HỌC ${namHoc}`;
+        statTitle.font = { bold: true, size: 12 };
         
-        let hsTruotCls = 0;
-        clsStudents.forEach(student => {
-          if (subjects.some(sub => student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < 5)) {
-            hsTruotCls++;
-          }
+        const statHeaderRow = targetSheet.getRow(3);
+        statHeaders.forEach((header, idx) => {
+          const cell = statHeaderRow.getCell(idx + 1);
+          cell.value = header;
+          cell.font = { bold: true };
+          cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
         });
-        totalHsTruotAll += hsTruotCls;
         
-        const row = tktruotSheet.getRow(tktruotCurrentRow);
-        row.getCell(1).value = cls;
-        row.getCell(1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+        let statCurrentRow = 4;
+        const totalRowData: Record<string, number> = {};
+        subjects.forEach(sub => totalRowData[sub] = 0);
+        let totalHsTruotAll = 0;
         
-        subjects.forEach((sub, idx) => {
-          let countSub = 0;
+        classes.forEach(cls => {
+          if (cls === 'TSTD') return;
+          
+          const clsStudents = validStudentsForAvg.filter(s => s.lop === cls);
+          
+          let hsTruotCls = 0;
           clsStudents.forEach(student => {
-            if (student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < 5) {
-              countSub++;
+            if (subjects.some(sub => student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < threshold)) {
+              hsTruotCls++;
             }
           });
-          totalRowData[sub] += countSub;
+          totalHsTruotAll += hsTruotCls;
           
-          const cell = row.getCell(idx + 2);
-          cell.value = countSub;
+          const row = targetSheet.getRow(statCurrentRow);
+          row.getCell(1).value = cls;
+          row.getCell(1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+          
+          subjects.forEach((sub, idx) => {
+            let countSub = 0;
+            clsStudents.forEach(student => {
+              if (student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < threshold) {
+                countSub++;
+              }
+            });
+            totalRowData[sub] += countSub;
+            
+            const cell = row.getCell(idx + 2);
+            cell.value = countSub;
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            cell.alignment = { horizontal: 'center' };
+          });
+          
+          const cellTotal = row.getCell(statCols.length);
+          cellTotal.value = hsTruotCls;
+          cellTotal.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+          cellTotal.alignment = { horizontal: 'center' };
+          
+          statCurrentRow++;
+        });
+        
+        // TỔNG CỘNG row
+        const tcRow = targetSheet.getRow(statCurrentRow);
+        tcRow.getCell(1).value = 'TỔNG CỘNG';
+        tcRow.getCell(1).font = { bold: true };
+        tcRow.getCell(1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+        
+        subjects.forEach((sub, idx) => {
+          const cell = tcRow.getCell(idx + 2);
+          cell.value = totalRowData[sub];
+          cell.font = { bold: true };
           cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
           cell.alignment = { horizontal: 'center' };
         });
         
-        const cellTotal = row.getCell(tktruotCols.length);
-        cellTotal.value = hsTruotCls;
-        cellTotal.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-        cellTotal.alignment = { horizontal: 'center' };
+        const tcTotalCell = tcRow.getCell(statCols.length);
+        tcTotalCell.value = totalHsTruotAll;
+        tcTotalCell.font = { bold: true };
+        tcTotalCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+        tcTotalCell.alignment = { horizontal: 'center' };
         
-        tktruotCurrentRow++;
-      });
-      
-      // TỔNG CỘNG row
-      const tcRow = tktruotSheet.getRow(tktruotCurrentRow);
-      tcRow.getCell(1).value = 'TỔNG CỘNG';
-      tcRow.getCell(1).font = { bold: true };
-      tcRow.getCell(1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-      
-      subjects.forEach((sub, idx) => {
-        const cell = tcRow.getCell(idx + 2);
-        cell.value = totalRowData[sub];
-        cell.font = { bold: true };
-        cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-        cell.alignment = { horizontal: 'center' };
-      });
-      
-      const tcTotalCell = tcRow.getCell(tktruotCols.length);
-      tcTotalCell.value = totalHsTruotAll;
-      tcTotalCell.font = { bold: true };
-      tcTotalCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-      tcTotalCell.alignment = { horizontal: 'center' };
-      
-      tktruotSheet.columns.forEach((column, index) => {
-        if (index === 0) column.width = 8;
-        else if (index === tktruotCols.length - 1) column.width = 15;
-      });
+        targetSheet.columns.forEach((column, index) => {
+          if (index === 0) column.width = 8;
+          else if (index === statCols.length - 1) column.width = 15;
+          else column.width = 8;
+        });
+      };
+
+      buildThresholdStatSheet(tktruotSheet, 5, '5');
+      buildThresholdStatSheet(duoi55Sheet, 5.5, '5.5');
+      buildThresholdStatSheet(duoi65Sheet, 6.5, '6.5');
 
       // Download main Excel file
       const buffer = await outWorkbook.xlsx.writeBuffer();
