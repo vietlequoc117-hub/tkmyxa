@@ -514,6 +514,80 @@ def process_scores():
         else: width = 8
         ws_tkso.column_dimensions[column_letter].width = width
 
+    # --- Sheet TKCUM (đứng sau sheet TKSo) ---
+    ws_tkcum = wb.create_sheet(title="TKCUM")
+    tkcum_headers = ['Khối', 'Môn', 'Tổng HS', 'Dự KT', 'Vắng', '<5', '5 đến <6,5', '6,5 đến <8', '8–10']
+    
+    header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    for c_idx, h_text in enumerate(tkcum_headers, 1):
+        cell = ws_tkcum.cell(row=1, column=c_idx, value=h_text)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
+    df_valid_students = df_final[(df_final['Họ và tên'] != 'ĐIỂM TRUNG BÌNH') & (df_final['Lớp'] != 'TSTD')]
+    total_hs_cum = len(df_valid_students)
+    
+    import re
+    grade_match = re.search(r'\d+', khoiLop)
+    grade_val = grade_match.group() if grade_match else '6'
+    
+    def get_py_sub_name(sub):
+        s = str(sub).strip().lower()
+        if 'van' in s or 'văn' in s: return 'Ngữ văn'
+        if 'anh' in s: return 'Tiếng Anh'
+        if 'toan' in s or 'toán' in s: return 'Toán'
+        if 'lí' in s or 'li' in s or 'lý' in s: return 'Vật lí'
+        if 'hóa' in s or 'hoa' in s: return 'Hóa học'
+        if 'sinh' in s: return 'Sinh học'
+        if 'sử' in s or 'su' in s: return 'Lịch sử'
+        if 'địa' in s or 'dia' in s: return 'Địa lí'
+        if 'gdcd' in s: return 'GDCD'
+        if 'tin' in s: return 'Tin học'
+        if 'công nghệ' in s or 'cong nghe' in s: return 'Công nghệ'
+        return sub.capitalize()
+        
+    for r_idx, sub in enumerate(subjects, 2):
+        if sub in df_valid_students.columns:
+            scores_s = pd.to_numeric(df_valid_students[sub], errors='coerce').dropna()
+            du_kt = len(scores_s)
+            vang = total_hs_cum - du_kt
+            c_duoi5 = int((scores_s < 5).sum())
+            c_5_65 = int(((scores_s >= 5) & (scores_s < 6.5)).sum())
+            c_65_8 = int(((scores_s >= 6.5) & (scores_s < 8)).sum())
+            c_8_10 = int(((scores_s >= 8) & (scores_s <= 10)).sum())
+        else:
+            du_kt = 0
+            vang = total_hs_cum
+            c_duoi5 = 0
+            c_5_65 = 0
+            c_65_8 = 0
+            c_8_10 = 0
+            
+        row_vals = [grade_val, get_py_sub_name(sub), total_hs_cum, du_kt, vang, c_duoi5, c_5_65, c_65_8, c_8_10]
+        for c_idx, val in enumerate(row_vals, 1):
+            cell = ws_tkcum.cell(row=r_idx, column=c_idx, value=val)
+            cell.border = thin_border
+            if c_idx == 2:
+                cell.alignment = Alignment(horizontal='left', vertical='center')
+            else:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws_tkcum.row_dimensions[r_idx].height = 22
+                
+    ws_tkcum.row_dimensions[1].height = 28
+    for col in ws_tkcum.columns:
+        column_letter = col[0].column_letter
+        h_val = ws_tkcum[f'{column_letter}1'].value
+        if h_val == 'Khối': width = 8
+        elif h_val == 'Môn': width = 16
+        elif h_val in ['Tổng HS', 'Dự KT']: width = 10
+        elif h_val in ['Vắng', '<5']: width = 8
+        elif h_val in ['5 đến <6,5', '6,5 đến <8']: width = 13
+        elif h_val == '8–10': width = 10
+        else: width = 10
+        ws_tkcum.column_dimensions[column_letter].width = width
+
     # --- Sheet DSTruot ---
     ws_dstruot = wb.create_sheet(title="DSTruot")
     
@@ -567,13 +641,13 @@ def process_scores():
         else: width = 8
         ws_dstruot.column_dimensions[column_letter].width = width
 
-    # --- Sheets TKTruot, Duoi55, Duoi65 ---
-    def build_threshold_sheet(sheet_name, threshold, threshold_label):
+    # --- Sheets TKTruot, Duoi55, Duoi65, T5D65, T65D8, T8D10 ---
+    def build_stat_sheet(sheet_name, title, total_col_name, check_fn):
         ws_stat = wb.create_sheet(title=sheet_name)
-        stat_cols = ['Lớp'] + subjects + ['Tổng số HS trượt']
+        stat_cols = ['Lớp'] + subjects + [total_col_name]
         
         ws_stat.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(stat_cols))
-        ws_stat['A1'] = f"BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI {threshold_label} THEO LỚP - {kyThi.upper()} {khoiLop.upper()} - NĂM HỌC {namHoc}"
+        ws_stat['A1'] = f"{title} - {kyThi.upper()} {khoiLop.upper()} - NĂM HỌC {namHoc}"
         ws_stat['A1'].font = Font(bold=True, size=12)
         
         for c_idx, col_name in enumerate(stat_cols, 1):
@@ -597,24 +671,24 @@ def process_scores():
             mask_cls = pd.Series(False, index=df_cls.index)
             for sub in subjects:
                 if sub in df_cls.columns:
-                    mask_cls = mask_cls | (df_cls[sub] < threshold)
+                    mask_cls = mask_cls | df_cls[sub].apply(lambda s: bool(pd.notna(s) and check_fn(s)))
             
             hs_cls = mask_cls.sum()
             total_hs_all += hs_cls
             
             for c_idx, sub in enumerate(subjects, 2):
                 if sub in df_cls.columns:
-                    count_sub = (df_cls[sub] < threshold).sum()
+                    count_sub = df_cls[sub].apply(lambda s: bool(pd.notna(s) and check_fn(s))).sum()
                 else:
                     count_sub = 0
                 
                 total_row_data[sub] += count_sub
                 
-                cell = ws_stat.cell(row=curr_row, column=c_idx, value=count_sub)
+                cell = ws_stat.cell(row=curr_row, column=c_idx, value=int(count_sub))
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center')
                 
-            cell_total = ws_stat.cell(row=curr_row, column=len(stat_cols), value=hs_cls)
+            cell_total = ws_stat.cell(row=curr_row, column=len(stat_cols), value=int(hs_cls))
             cell_total.border = thin_border
             cell_total.alignment = Alignment(horizontal='center')
             
@@ -625,12 +699,12 @@ def process_scores():
         cell_tc.border = thin_border
         
         for c_idx, sub in enumerate(subjects, 2):
-            cell = ws_stat.cell(row=curr_row, column=c_idx, value=total_row_data[sub])
+            cell = ws_stat.cell(row=curr_row, column=c_idx, value=int(total_row_data[sub]))
             cell.font = Font(bold=True)
             cell.border = thin_border
             cell.alignment = Alignment(horizontal='center')
             
-        cell_total_all = ws_stat.cell(row=curr_row, column=len(stat_cols), value=total_hs_all)
+        cell_total_all = ws_stat.cell(row=curr_row, column=len(stat_cols), value=int(total_hs_all))
         cell_total_all.font = Font(bold=True)
         cell_total_all.border = thin_border
         cell_total_all.alignment = Alignment(horizontal='center')
@@ -639,13 +713,18 @@ def process_scores():
             column_letter = col[0].column_letter
             header_val = ws_stat[f'{column_letter}3'].value
             if header_val == 'Lớp': width = 8
-            elif header_val == 'Tổng số HS trượt': width = 15
+            elif header_val in ['Tổng số HS trượt', 'Tổng số HS']: width = 15
             else: width = 8
             ws_stat.column_dimensions[column_letter].width = width
 
-    build_threshold_sheet("TKTruot", 5, "5")
-    build_threshold_sheet("Duoi55", 5.5, "5.5")
-    build_threshold_sheet("Duoi65", 6.5, "6.5")
+    build_stat_sheet("TKTruot", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5 THEO LỚP", "Tổng số HS trượt", lambda s: s < 5)
+    build_stat_sheet("Duoi55", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5.5 THEO LỚP", "Tổng số HS trượt", lambda s: s < 5.5)
+    build_stat_sheet("Duoi65", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 6.5 THEO LỚP", "Tổng số HS trượt", lambda s: s < 6.5)
+    build_stat_sheet("T5D65", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 5 ĐẾN DƯỚI 6.5 THEO LỚP", "Tổng số HS", lambda s: 5 <= s < 6.5)
+    build_stat_sheet("T65D8", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 6.5 ĐẾN DƯỚI 8 THEO LỚP", "Tổng số HS", lambda s: 6.5 <= s < 8)
+    build_stat_sheet("T8D10", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 8 ĐẾN 10 THEO LỚP", "Tổng số HS", lambda s: 8 <= s <= 10)
+    build_stat_sheet("T9D10", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 9 ĐẾN 10 THEO LỚP", "Tổng số HS", lambda s: 9 <= s <= 10)
+    build_stat_sheet("T95D10", "BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 9.5 ĐẾN 10 THEO LỚP", "Tổng số HS", lambda s: 9.5 <= s <= 10)
 
     zip_filename = "Danh_sach_cac_lop.zip"
     with zipfile.ZipFile(zip_filename, 'w') as zipf:
@@ -1189,9 +1268,15 @@ export default function App() {
       const top5Sheet = outWorkbook.addWorksheet(topSheetName);
       const tbdiemSheet = outWorkbook.addWorksheet('TBDIEM');
       const tksoSheet = outWorkbook.addWorksheet('TKSo');
+      const tkcumSheet = outWorkbook.addWorksheet('TKCUM');
       const tktruotSheet = outWorkbook.addWorksheet('TKTruot');
       const duoi55Sheet = outWorkbook.addWorksheet('Duoi55');
       const duoi65Sheet = outWorkbook.addWorksheet('Duoi65');
+      const t5d65Sheet = outWorkbook.addWorksheet('T5D65');
+      const t65d8Sheet = outWorkbook.addWorksheet('T65D8');
+      const t8d10Sheet = outWorkbook.addWorksheet('T8D10');
+      const t9d10Sheet = outWorkbook.addWorksheet('T9D10');
+      const t95d10Sheet = outWorkbook.addWorksheet('T95D10');
       const dstruotSheet = outWorkbook.addWorksheet('DSTruot');
       
       const classSheets: Record<string, ExcelJS.Worksheet> = {};
@@ -1879,6 +1964,112 @@ export default function App() {
         else column.width = 8;
       });
 
+      // --- Sheet TKCUM (đứng sau sheet TKSo) ---
+      const tkcumHeaders = ['Khối', 'Môn', 'Tổng HS', 'Dự KT', 'Vắng', '<5', '5 đến <6,5', '6,5 đến <8', '8–10'];
+      
+      const tkcumHeaderRow = tkcumSheet.getRow(1);
+      tkcumHeaderRow.height = 28;
+      tkcumHeaders.forEach((hText, idx) => {
+        const cell = tkcumHeaderRow.getCell(idx + 1);
+        cell.value = hText;
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFD9D9D9' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true
+        };
+      });
+
+      const getSubjectDisplayName = (sub: string) => {
+        const s = sub.trim().toLowerCase();
+        if (s === 'van' || s === 'văn' || s.includes('ngữ văn') || s.includes('ngu van')) return 'Ngữ văn';
+        if (s === 'anh' || s.includes('tiếng anh') || s.includes('tieng anh')) return 'Tiếng Anh';
+        if (s === 'toan' || s === 'toán') return 'Toán';
+        if (s === 'lí' || s === 'li' || s === 'lý' || s.includes('vật lí') || s.includes('vat ly')) return 'Vật lí';
+        if (s === 'hóa' || s === 'hoa' || s.includes('hóa học')) return 'Hóa học';
+        if (s === 'sinh' || s.includes('sinh học')) return 'Sinh học';
+        if (s === 'sử' || s === 'su' || s.includes('lịch sử')) return 'Lịch sử';
+        if (s === 'địa' || s === 'dia' || s.includes('địa lí') || s.includes('dia ly')) return 'Địa lí';
+        if (s === 'gdcd') return 'GDCD';
+        if (s === 'tin' || s.includes('tin học')) return 'Tin học';
+        if (s.includes('công nghệ') || s.includes('cong nghe')) return 'Công nghệ';
+        if (s.includes('khtn') || s.includes('khoa học tự nhiên')) return 'KHTN';
+        if (s.includes('ls&đl') || s.includes('lịch sử và địa lí')) return 'LS&ĐL';
+        return sub.charAt(0).toUpperCase() + sub.slice(1);
+      };
+
+      const gradeNumber = khoiLop.replace(/[^0-9]/g, '') || '6';
+      const totalStudentsCum = validStudents.length;
+
+      let tkcumCurrentRow = 2;
+      subjects.forEach(sub => {
+        const scores = validStudents
+          .map(s => s.scores[sub])
+          .filter((s): s is number => s !== undefined && s !== null && !isNaN(s));
+        
+        const duKT = scores.length;
+        const vang = totalStudentsCum - duKT;
+        const countDuoi5 = scores.filter(s => s < 5).length;
+        const count5Den65 = scores.filter(s => s >= 5 && s < 6.5).length;
+        const count65Den8 = scores.filter(s => s >= 6.5 && s < 8).length;
+        const count8Den10 = scores.filter(s => s >= 8 && s <= 10).length;
+
+        const row = tkcumSheet.getRow(tkcumCurrentRow);
+        row.height = 22;
+        const rowValues = [
+          gradeNumber,
+          getSubjectDisplayName(sub),
+          totalStudentsCum,
+          duKT,
+          vang,
+          countDuoi5,
+          count5Den65,
+          count65Den8,
+          count8Den10
+        ];
+
+        rowValues.forEach((val, idx) => {
+          const cell = row.getCell(idx + 1);
+          cell.value = val;
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+          if (idx === 1) { // Môn
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+          } else {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          }
+        });
+
+        tkcumCurrentRow++;
+      });
+
+      tkcumSheet.columns = [
+        { width: 8 },  // Khối
+        { width: 16 }, // Môn
+        { width: 10 }, // Tổng HS
+        { width: 10 }, // Dự KT
+        { width: 8 },  // Vắng
+        { width: 8 },  // <5
+        { width: 13 }, // 5 đến <6,5
+        { width: 13 }, // 6,5 đến <8
+        { width: 10 }  // 8–10
+      ];
+
       // --- DSTruot Sheet ---
       
       const dstruotCols = ['stt', 'hoTen', 'ngaySinh', 'sbd', 'lop', ...subjects, 'tongDiem', 'tbm'];
@@ -1935,16 +2126,21 @@ export default function App() {
         else column.width = 8;
       });
 
-      // --- TKTruot, Duoi55, Duoi65 Sheets ---
-      const buildThresholdStatSheet = (targetSheet: ExcelJS.Worksheet, threshold: number, thresholdLabel: string) => {
-        const statCols = ['lop', ...subjects, 'tongHsTruot'];
-        const statHeaders = ['Lớp', ...subjects.map(s => s.charAt(0).toUpperCase() + s.slice(1)), 'Tổng số HS trượt'];
+      // --- Sheets TKTruot, Duoi55, Duoi65, T5D65, T65D8, T8D10 ---
+      const buildStatSheet = (
+        targetSheet: ExcelJS.Worksheet,
+        title: string,
+        totalColTitle: string,
+        predicate: (score: number) => boolean
+      ) => {
+        const statCols = ['lop', ...subjects, 'tongHs'];
+        const statHeaders = ['Lớp', ...subjects.map(s => s.charAt(0).toUpperCase() + s.slice(1)), totalColTitle];
         
         targetSheet.insertRow(1, []);
         targetSheet.insertRow(1, []);
         targetSheet.mergeCells(1, 1, 1, statCols.length);
         const statTitle = targetSheet.getCell('A1');
-        statTitle.value = `BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI ${thresholdLabel} THEO LỚP - ${kyThi.toUpperCase()} ${khoiLop.toUpperCase()} - NĂM HỌC ${namHoc}`;
+        statTitle.value = `${title} - ${kyThi.toUpperCase()} ${khoiLop.toUpperCase()} - NĂM HỌC ${namHoc}`;
         statTitle.font = { bold: true, size: 12 };
         
         const statHeaderRow = targetSheet.getRow(3);
@@ -1959,20 +2155,20 @@ export default function App() {
         let statCurrentRow = 4;
         const totalRowData: Record<string, number> = {};
         subjects.forEach(sub => totalRowData[sub] = 0);
-        let totalHsTruotAll = 0;
+        let totalHsAll = 0;
         
         classes.forEach(cls => {
           if (cls === 'TSTD') return;
           
           const clsStudents = validStudentsForAvg.filter(s => s.lop === cls);
           
-          let hsTruotCls = 0;
+          let hsCls = 0;
           clsStudents.forEach(student => {
-            if (subjects.some(sub => student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < threshold)) {
-              hsTruotCls++;
+            if (subjects.some(sub => student.scores[sub] !== undefined && student.scores[sub] !== null && predicate(student.scores[sub]))) {
+              hsCls++;
             }
           });
-          totalHsTruotAll += hsTruotCls;
+          totalHsAll += hsCls;
           
           const row = targetSheet.getRow(statCurrentRow);
           row.getCell(1).value = cls;
@@ -1981,7 +2177,7 @@ export default function App() {
           subjects.forEach((sub, idx) => {
             let countSub = 0;
             clsStudents.forEach(student => {
-              if (student.scores[sub] !== undefined && student.scores[sub] !== null && student.scores[sub] < threshold) {
+              if (student.scores[sub] !== undefined && student.scores[sub] !== null && predicate(student.scores[sub])) {
                 countSub++;
               }
             });
@@ -1994,7 +2190,7 @@ export default function App() {
           });
           
           const cellTotal = row.getCell(statCols.length);
-          cellTotal.value = hsTruotCls;
+          cellTotal.value = hsCls;
           cellTotal.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
           cellTotal.alignment = { horizontal: 'center' };
           
@@ -2016,7 +2212,7 @@ export default function App() {
         });
         
         const tcTotalCell = tcRow.getCell(statCols.length);
-        tcTotalCell.value = totalHsTruotAll;
+        tcTotalCell.value = totalHsAll;
         tcTotalCell.font = { bold: true };
         tcTotalCell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
         tcTotalCell.alignment = { horizontal: 'center' };
@@ -2028,9 +2224,14 @@ export default function App() {
         });
       };
 
-      buildThresholdStatSheet(tktruotSheet, 5, '5');
-      buildThresholdStatSheet(duoi55Sheet, 5.5, '5.5');
-      buildThresholdStatSheet(duoi65Sheet, 6.5, '6.5');
+      buildStatSheet(tktruotSheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5 THEO LỚP', 'Tổng số HS trượt', s => s < 5);
+      buildStatSheet(duoi55Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 5.5 THEO LỚP', 'Tổng số HS trượt', s => s < 5.5);
+      buildStatSheet(duoi65Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM DƯỚI 6.5 THEO LỚP', 'Tổng số HS trượt', s => s < 6.5);
+      buildStatSheet(t5d65Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 5 ĐẾN DƯỚI 6.5 THEO LỚP', 'Tổng số HS', s => s >= 5 && s < 6.5);
+      buildStatSheet(t65d8Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 6.5 ĐẾN DƯỚI 8 THEO LỚP', 'Tổng số HS', s => s >= 6.5 && s < 8);
+      buildStatSheet(t8d10Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 8 ĐẾN 10 THEO LỚP', 'Tổng số HS', s => s >= 8 && s <= 10);
+      buildStatSheet(t9d10Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 9 ĐẾN 10 THEO LỚP', 'Tổng số HS', s => s >= 9 && s <= 10);
+      buildStatSheet(t95d10Sheet, 'BẢNG THỐNG KÊ SỐ LƯỢNG HỌC SINH CÓ ĐIỂM TỪ 9.5 ĐẾN 10 THEO LỚP', 'Tổng số HS', s => s >= 9.5 && s <= 10);
 
       // Download main Excel file
       const buffer = await outWorkbook.xlsx.writeBuffer();
