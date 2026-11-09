@@ -268,7 +268,7 @@ def process_scores():
         ws.column_dimensions[column_letter].width = width
 
     # --- Sheet Top ---
-    top_limit = 15 if "${khoiLop}" in ["Khối 6", "Khối 7", "Khối 8", "Khối 10", "Khối 11"] else 5
+    top_limit = 15
     ws_top5 = wb.create_sheet(title=f"Top {top_limit}")
     
     ws_top5.merge_cells('A1:L1')
@@ -1380,7 +1380,7 @@ export default function App() {
       // 3. Generate Output Excel
       const outWorkbook = new ExcelJS.Workbook();
       const outSheet = outWorkbook.addWorksheet('Bảng Điểm Tổng Hợp');
-      const topLimit = ['Khối 6', 'Khối 7', 'Khối 8', 'Khối 10', 'Khối 11'].includes(khoiLop) ? 15 : 5;
+      const topLimit = 15;
       const topSheetName = `Top ${topLimit}`;
       const top5Sheet = outWorkbook.addWorksheet(topSheetName);
       const tbdiemSheet = outWorkbook.addWorksheet('TBDIEM');
