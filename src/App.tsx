@@ -29,8 +29,15 @@ from google.colab import files
 import io
 import os
 import zipfile
+import unicodedata
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+
+def norm_text(val):
+    if pd.isna(val) or val is None:
+        return ''
+    s = unicodedata.normalize('NFC', str(val))
+    return ' '.join(s.split()).strip()
 
 def process_scores():
     print("Vui lòng tải lên các file Excel điểm môn học (VD: Toan.xlsx, Van.xlsx,...)")
@@ -47,10 +54,11 @@ def process_scores():
         if not filename.endswith('.xlsx') and not filename.endswith('.xls'):
             continue
             
-        subject_name = os.path.splitext(filename)[0]
-        subjects.append(subject_name)
+        subject_name = norm_text(os.path.splitext(filename)[0])
+        if subject_name not in subjects:
+            subjects.append(subject_name)
         
-        # Tự động tìm dòng header (mẫu THCS Mỹ Xá header ở dòng 5, index 4)
+        # Tự động tìm dòng header (mẫu THCS Mỹ Xá header ở dòng 5 hoặc dòng 6)
         header_idx = 4
         col_hoten = 1    # Cột B
         col_ngaysinh = 2 # Cột C
@@ -59,18 +67,27 @@ def process_scores():
         col_lop = 9      # Cột J (Ghi chú)
 
         try:
-            temp_df = pd.read_excel(io.BytesIO(content), header=None, nrows=10)
+            temp_df = pd.read_excel(io.BytesIO(content), header=None, nrows=15)
             for r_idx, r in temp_df.iterrows():
-                row_str = " ".join([str(val).lower() for val in r.values if pd.notna(val)])
-                if 'họ và tên' in row_str or 'số bd' in row_str or 'sbd' in row_str:
+                row_cells = [norm_text(val).lower() for val in r.values]
+                row_str = " ".join([c for c in row_cells if c])
+                if ('họ và tên' in row_str or 'họ tên' in row_str) or ('số bd' in row_str or 'sbd' in row_str):
                     header_idx = r_idx
-                    for c_idx, c_val in enumerate(r.values):
-                        c_str = str(c_val).lower().strip()
+                    cand_diem_exact = None
+                    cand_diem_partial = None
+                    for c_idx, c_str in enumerate(row_cells):
+                        if not c_str:
+                            continue
                         if 'họ và tên' in c_str or c_str == 'họ tên': col_hoten = c_idx
                         elif 'ngày sinh' in c_str: col_ngaysinh = c_idx
-                        elif 'số bd' in c_str or c_str == 'sbd': col_sbd = c_idx
-                        elif 'điểm' in c_str and 'địa điểm' not in c_str: col_diem = c_idx
+                        elif 'số bd' in c_str or c_str == 'sbd' or 'số báo danh' in c_str: col_sbd = c_idx
+                        elif c_str in ['điểm', 'điểm thi', 'điểm số', 'diem']: cand_diem_exact = c_idx
+                        elif 'điểm' in c_str and 'địa' not in c_str and 'bảng' not in c_str: cand_diem_partial = c_idx
                         elif 'ghi chú' in c_str or c_str == 'lớp': col_lop = c_idx
+                    if cand_diem_exact is not None:
+                        col_diem = cand_diem_exact
+                    elif cand_diem_partial is not None:
+                        col_diem = cand_diem_partial
                     break
             df = pd.read_excel(io.BytesIO(content), header=header_idx)
         except Exception as e:
@@ -79,14 +96,16 @@ def process_scores():
             
         for index, row in df.iterrows():
             try:
-                sbd = str(row.iloc[col_sbd]).strip() # Cột G - Số BD
+                sbd = norm_text(row.iloc[col_sbd]).replace(' ', '').upper() # Cột G - Số BD
                 if sbd.endswith('.0') and sbd[:-2].isdigit():
                     sbd = sbd[:-2]
-                ho_ten = str(row.iloc[col_hoten]).strip() # Cột B - Họ tên
+                ho_ten = norm_text(row.iloc[col_hoten]) # Cột B - Họ tên
                 
-                if pd.isna(sbd) or sbd == 'nan' or sbd == '' or '...' in sbd:
+                if not sbd or sbd == 'NAN' or '...' in sbd:
                     continue
-                if pd.isna(ho_ten) or ho_ten == 'nan' or ho_ten == '':
+                if not ho_ten or ho_ten.lower() == 'nan':
+                    continue
+                if any(ho_ten.lower().startswith(p) for p in ['stt', 'họ và tên', 'tổng số', 'tổng cộng', 'giáo viên', 'người lập', 'hiệu trưởng']):
                     continue
                     
                 if sbd not in student_data:
@@ -97,10 +116,10 @@ def process_scores():
                     elif pd.isna(ngay_sinh) or str(ngay_sinh) == 'nan':
                         ngay_sinh = ''
                     else:
-                        ngay_sinh = str(ngay_sinh).strip()
+                        ngay_sinh = norm_text(ngay_sinh)
                         
                     lop_val = row.iloc[col_lop]
-                    lop = '' if pd.isna(lop_val) or str(lop_val) == 'nan' else str(lop_val).strip()
+                    lop = '' if pd.isna(lop_val) or str(lop_val) == 'nan' else norm_text(lop_val)
 
                     student_data[sbd] = {
                         'Họ và tên': ho_ten,
@@ -111,8 +130,8 @@ def process_scores():
                     }
                 
                 score = row.iloc[col_diem] # Cột I - Điểm
-                if pd.notna(score) and str(score).strip() not in ['', 'nan', '-', 'v', 'V']:
-                    val_str = str(score).strip().replace(',', '.')
+                if pd.notna(score) and norm_text(score) not in ['', 'nan', '-', 'v', 'V', 'vắng', 'Vắng']:
+                    val_str = norm_text(score).replace(',', '.')
                     try:
                         student_data[sbd]['scores'][subject_name] = float(val_str)
                     except ValueError:
@@ -968,23 +987,90 @@ export default function App() {
       const studentData: Record<string, any> = {};
       const subjects: string[] = [];
 
+      // Helper giải mã mọi định dạng cell của ExcelJS (RichText, Formula, Hyperlink, Date, Unicode tổ hợp NFD -> dựng sẵn NFC)
+      const extractRawCellVal = (val: any): any => {
+        if (val === null || val === undefined) return '';
+        if (val instanceof Date) return val;
+        if (typeof val === 'object') {
+          if (Array.isArray(val.richText)) {
+            return val.richText.map((rt: any) => rt?.text ?? '').join('');
+          }
+          if ('result' in val && val.result !== undefined && val.result !== null) {
+            if (typeof val.result === 'object' && 'error' in val.result) return '';
+            return val.result;
+          }
+          if ('text' in val && val.text !== undefined && val.text !== null) {
+            return extractRawCellVal(val.text);
+          }
+          if ('error' in val) return '';
+          return '';
+        }
+        return val;
+      };
+
+      const getNormalizedCellText = (cell: ExcelJS.Cell | undefined | null): string => {
+        if (!cell) return '';
+        const raw = extractRawCellVal(cell.value);
+        if (raw instanceof Date) {
+          const d = raw.getDate().toString().padStart(2, '0');
+          const m = (raw.getMonth() + 1).toString().padStart(2, '0');
+          const y = raw.getFullYear();
+          return `${d}/${m}/${y}`;
+        }
+        let str = raw !== '' && raw !== null && raw !== undefined ? String(raw) : '';
+        if (!str && cell.text) {
+          str = String(cell.text);
+        }
+        return str
+          .normalize('NFC')
+          .replace(/[\u200B-\u200D\uFEFF]/g, '')
+          .replace(/\u00A0/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+
+      const parseScoreFromCell = (cell: ExcelJS.Cell | undefined | null): number | null => {
+        if (!cell) return null;
+        const raw = extractRawCellVal(cell.value);
+        if (typeof raw === 'number') {
+          return !isNaN(raw) && isFinite(raw) ? raw : null;
+        }
+        const str = getNormalizedCellText(cell).replace(',', '.');
+        if (!str || str === '-' || str.toLowerCase() === 'v' || str.toLowerCase() === 'vắng') {
+          return null;
+        }
+        const num = Number(str);
+        if (!isNaN(num) && isFinite(num)) return num;
+        const parsed = parseFloat(str);
+        return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
+      };
+
       // 1. Read all files
       for (const file of files) {
-        let subjectName = file.name.replace(/\.[^/.]+$/, "").trim();
+        let subjectName = file.name
+          .replace(/\.[^/.]+$/, '')
+          .normalize('NFC')
+          .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
 
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(await file.arrayBuffer());
-        const worksheet = workbook.worksheets[0];
 
-        // Tìm tên môn học từ dòng 4 hoặc các dòng đầu (VD: "BẢNG ĐIỂM THI MÔN: VĂN 6")
+        // Chọn worksheet có dữ liệu học sinh (phòng trường hợp file có nhiều sheet hoặc sheet đầu trống)
+        const candidateSheets = workbook.worksheets.filter(ws => ws && ws.rowCount > 0);
+        const worksheet = candidateSheets.find(ws => ws.rowCount >= 5) || candidateSheets[0] || workbook.worksheets[0];
+        if (!worksheet) continue;
+
+        // Tìm tên môn học từ dòng tiêu đề nếu tên file quá dài hoặc chung chung (VD: "BẢNG ĐIỂM THI MÔN: VĂN 9")
         for (let r = 1; r <= 5; r++) {
           const row = worksheet.getRow(r);
           let foundSubject = false;
           row.eachCell((cell) => {
-            const text = cell.value?.toString().trim() || '';
+            const text = getNormalizedCellText(cell);
             const match = text.match(/bảng\s+điểm\s+thi\s+môn\s*[:\-]\s*(.+)/i) || text.match(/môn\s*[:\-]\s*(.+)/i);
             if (match && match[1]) {
-              const detected = match[1].trim();
+              const detected = match[1].normalize('NFC').trim();
               if (detected && (subjectName.length > 25 || subjectName.toLowerCase().startsWith('bảng điểm') || subjectName.toLowerCase().startsWith('bang_diem') || subjectName.toLowerCase().includes('export') || !subjectName)) {
                 subjectName = detected;
               }
@@ -1000,7 +1086,7 @@ export default function App() {
 
         // Tự động nhận dạng vị trí cột và dòng tiêu đề
         // Cấu trúc chuẩn THCS Mỹ Xá:
-        // Dòng 5: Cột A (1): STT | Cột B (2): Họ và tên | Cột C (3): Ngày sinh | Cột D (4): Giới | Cột E (5): Phòng thi | Cột F (6): Địa điểm thi | Cột G (7): Số BD | Cột H (8): Mã đề | Cột I (9): Điểm | Cột J (10): Ghi chú (Lớp)
+        // Cột A (1): STT | Cột B (2): Họ và tên | Cột C (3): Ngày sinh | Cột D (4): Giới | Cột E (5): Phòng thi | Cột F (6): Địa điểm thi | Cột G (7): SBD / Số BD | Cột H (8): Mã đề | Cột I (9): Điểm | Cột J (10): Ghi chú (Lớp)
         let headerRowNumber = 5;
         let colHoTen = 2; // Cột B
         let colNgaySinh = 3; // Cột C
@@ -1008,71 +1094,86 @@ export default function App() {
         let colDiem = 9; // Cột I
         let colLop = 10; // Cột J (Ghi chú)
 
-        for (let r = 1; r <= 10; r++) {
+        const maxScanRow = Math.min(15, worksheet.rowCount);
+        for (let r = 1; r <= maxScanRow; r++) {
           const row = worksheet.getRow(r);
           let foundHeader = false;
+          let candHoTen: number | null = null;
+          let candNgaySinh: number | null = null;
+          let candSbd: number | null = null;
+          let candDiemExact: number | null = null;
+          let candDiemPartial: number | null = null;
+          let candLop: number | null = null;
+
           row.eachCell((cell, colNumber) => {
-            const raw = cell.value?.toString().trim().toLowerCase() || '';
+            const raw = getNormalizedCellText(cell).toLowerCase();
+            if (!raw) return;
+
             if (raw === 'họ và tên' || raw === 'họ tên' || raw.includes('họ và tên')) {
-              colHoTen = colNumber;
+              candHoTen = colNumber;
               foundHeader = true;
-            } else if (raw === 'số bd' || raw === 'sbd' || raw === 'số báo danh' || raw.includes('số bd')) {
-              colSbd = colNumber;
+            } else if (raw === 'số bd' || raw === 'sbd' || raw === 'số báo danh' || raw.includes('số bd') || raw.includes('số báo danh')) {
+              candSbd = colNumber;
               foundHeader = true;
             } else if (raw === 'ngày sinh' || raw.includes('ngày sinh')) {
-              colNgaySinh = colNumber;
-            } else if (raw === 'điểm' || (raw.includes('điểm') && !raw.includes('địa điểm'))) {
-              colDiem = colNumber;
+              candNgaySinh = colNumber;
+            } else if (raw === 'điểm' || raw === 'điểm thi' || raw === 'điểm số' || raw === 'diem') {
+              candDiemExact = colNumber;
+            } else if (raw.includes('điểm') && !raw.includes('địa') && !raw.includes('bảng')) {
+              candDiemPartial = colNumber;
             } else if (raw === 'ghi chú' || raw === 'lớp' || raw.includes('ghi chú')) {
-              colLop = colNumber;
+              candLop = colNumber;
             }
           });
+
           if (foundHeader) {
             headerRowNumber = r;
+            if (candHoTen !== null) colHoTen = candHoTen;
+            if (candNgaySinh !== null) colNgaySinh = candNgaySinh;
+            if (candSbd !== null) colSbd = candSbd;
+            if (candDiemExact !== null) {
+              colDiem = candDiemExact;
+            } else if (candDiemPartial !== null) {
+              colDiem = candDiemPartial;
+            }
+            if (candLop !== null) colLop = candLop;
             break;
           }
         }
 
-        const startDataRow = headerRowNumber + 1; // Bắt đầu từ dòng 6 (Học sinh đầu tiên STT 1)
+        const startDataRow = headerRowNumber + 1;
+
+        // Kiểm tra dự phòng: Nếu cột colDiem không có điểm số nào nhưng cột 9 (Cột I chuẩn) có điểm số thì tự động dùng cột 9
+        if (colDiem !== 9) {
+          let countInDetected = 0;
+          let countInCol9 = 0;
+          worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber < startDataRow) return;
+            if (parseScoreFromCell(row.getCell(colDiem)) !== null) countInDetected++;
+            if (parseScoreFromCell(row.getCell(9)) !== null) countInCol9++;
+          });
+          if (countInDetected === 0 && countInCol9 > 0) {
+            colDiem = 9;
+          }
+        }
 
         worksheet.eachRow((row, rowNumber) => {
           if (rowNumber < startDataRow) return;
 
-          const sbdCell = row.getCell(colSbd);
-          let sbd = sbdCell.value !== null && sbdCell.value !== undefined ? sbdCell.value.toString().trim() : '';
+          let sbd = getNormalizedCellText(row.getCell(colSbd)).replace(/\s+/g, '').toUpperCase();
           if (sbd.endsWith('.0') && !isNaN(Number(sbd))) {
             sbd = sbd.replace(/\.0$/, '');
           }
 
-          const hoTenCell = row.getCell(colHoTen);
-          const hoTen = hoTenCell.value?.toString().trim();
-          
+          const hoTen = getNormalizedCellText(row.getCell(colHoTen));
+
           // Bỏ qua dòng rác, dòng trống hoặc dòng ký tên cuối bảng
           if (!sbd || sbd.includes('...') || !hoTen) return;
           if (/^(stt|họ và tên|tổng số|tổng cộng|giáo viên|người lập|hiệu trưởng)/i.test(hoTen)) return;
 
           if (!studentData[sbd]) {
-            let ngaySinhRaw = row.getCell(colNgaySinh).value;
-            let ngaySinh = '';
-            if (ngaySinhRaw instanceof Date) {
-              const d = ngaySinhRaw.getDate().toString().padStart(2, '0');
-              const m = (ngaySinhRaw.getMonth() + 1).toString().padStart(2, '0');
-              const y = ngaySinhRaw.getFullYear();
-              ngaySinh = `${d}/${m}/${y}`;
-            } else if (typeof ngaySinhRaw === 'object' && ngaySinhRaw !== null) {
-              const txt = (ngaySinhRaw as any).text || (ngaySinhRaw as any).result || '';
-              ngaySinh = txt.toString().trim();
-            } else if (ngaySinhRaw !== null && ngaySinhRaw !== undefined) {
-              ngaySinh = ngaySinhRaw.toString().trim();
-            }
-
-            let lopRaw = row.getCell(colLop).value;
-            let lop = '';
-            if (typeof lopRaw === 'object' && lopRaw !== null) {
-              lop = ((lopRaw as any).text || (lopRaw as any).result || '').toString().trim();
-            } else if (lopRaw !== null && lopRaw !== undefined) {
-              lop = lopRaw.toString().trim();
-            }
+            const ngaySinh = getNormalizedCellText(row.getCell(colNgaySinh));
+            const lop = getNormalizedCellText(row.getCell(colLop));
 
             studentData[sbd] = {
               hoTen: hoTen,
@@ -1083,29 +1184,7 @@ export default function App() {
             };
           }
 
-          const scoreRaw = row.getCell(colDiem).value;
-          let parsedScore: number | null = null;
-          if (typeof scoreRaw === 'number') {
-            if (!isNaN(scoreRaw)) parsedScore = scoreRaw;
-          } else if (typeof scoreRaw === 'string') {
-            const str = scoreRaw.trim().replace(',', '.');
-            if (str !== '' && str !== '-' && str.toLowerCase() !== 'v') {
-              const num = parseFloat(str);
-              if (!isNaN(num)) parsedScore = num;
-            }
-          } else if (typeof scoreRaw === 'object' && scoreRaw !== null) {
-            const res = (scoreRaw as any).result ?? (scoreRaw as any).text;
-            if (typeof res === 'number') {
-              if (!isNaN(res)) parsedScore = res;
-            } else if (typeof res === 'string') {
-              const str = res.trim().replace(',', '.');
-              if (str !== '' && str !== '-' && str.toLowerCase() !== 'v') {
-                const num = parseFloat(str);
-                if (!isNaN(num)) parsedScore = num;
-              }
-            }
-          }
-
+          const parsedScore = parseScoreFromCell(row.getCell(colDiem));
           if (parsedScore !== null) {
             studentData[sbd].scores[subjectName] = parsedScore;
           }
